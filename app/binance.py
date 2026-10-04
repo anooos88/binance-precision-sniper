@@ -40,6 +40,10 @@ class BinanceMarketData:
     # symbols for the live WebSocket.
     MIN_LIQUIDITY_QUOTE_VOLUME = 20_000_000
 
+    # Historical candles loaded before WebSocket startup.
+    HISTORICAL_1M_LIMIT = 300
+    HISTORICAL_5M_LIMIT = 300
+
     def __init__(
         self,
         config: Config,
@@ -199,6 +203,205 @@ class BinanceMarketData:
         )
 
     # --------------------------------------------------
+    # Historical klines
+    # --------------------------------------------------
+
+    async def fetch_historical_klines(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int
+    ):
+        """
+        Load historical Binance Spot klines.
+
+        Used during startup to initialize EMA history
+        before the live WebSocket begins.
+        """
+
+        await self.create_session()
+
+        url = (
+            self.config.rest_url
+            + "/api/v3/klines"
+        )
+
+        params = {
+            "symbol": symbol.upper(),
+            "interval": interval,
+            "limit": limit,
+        }
+
+        async with self.session.get(
+            url,
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=20)
+        ) as response:
+
+            response.raise_for_status()
+
+            data = await response.json()
+
+        candles = []
+
+        for row in data:
+
+            try:
+
+                candle = {
+                    "open_time": int(row[0]),
+                    "close_time": int(row[6]),
+                    "open": float(row[1]),
+                    "high": float(row[2]),
+                    "low": float(row[3]),
+                    "close": float(row[4]),
+                    "volume": float(row[5]),
+                    "closed": True,
+                }
+
+                candles.append(candle)
+
+            except (
+                TypeError,
+                ValueError,
+                IndexError
+            ):
+                continue
+
+        return candles
+
+    # --------------------------------------------------
+    # Load historical klines for all selected symbols
+    # --------------------------------------------------
+
+    async def load_historical_klines(self):
+
+        logger.info(
+            "Loading historical klines for %d symbols...",
+            len(self.symbols)
+        )
+
+        ready_count = 0
+
+        for symbol in self.symbols:
+
+            state = self.states.get(symbol)
+
+            if state is None:
+                continue
+
+            try:
+
+                candles_1m = (
+                    await self.fetch_historical_klines(
+                        symbol,
+                        "1m",
+                        self.HISTORICAL_1M_LIMIT
+                    )
+                )
+
+                candles_5m = (
+                    await self.fetch_historical_klines(
+                        symbol,
+                        "5m",
+                        self.HISTORICAL_5M_LIMIT
+                    )
+                )
+
+                if len(candles_1m) < 50:
+
+                    logger.warning(
+                        "%s: only %d 1m candles received",
+                        symbol.upper(),
+                        len(candles_1m)
+                    )
+
+                    continue
+
+                if len(candles_5m) < 200:
+
+                    logger.warning(
+                        "%s: only %d 5m candles received",
+                        symbol.upper(),
+                        len(candles_5m)
+                    )
+
+                    continue
+
+                state.candles_1m.clear()
+                state.candles_5m.clear()
+
+                state.candles_1m.extend(
+                    candles_1m
+                )
+
+                state.candles_5m.extend(
+                    candles_5m
+                )
+
+                # Calculate initial EMA values
+                # before starting the live WebSocket.
+                self.update_ema(
+                    state,
+                    "1m"
+                )
+
+                self.update_ema(
+                    state,
+                    "5m"
+                )
+
+                if (
+                    state.ema20_1m is None
+                    or state.ema50_1m is None
+                    or state.ema50_5m is None
+                    or state.ema200_5m is None
+                ):
+
+                    logger.warning(
+                        "%s: EMA calculation not ready",
+                        symbol.upper()
+                    )
+
+                    continue
+
+                ready_count += 1
+
+                logger.info(
+                    "Historical EMA ready: %s | "
+                    "1m=%d | 5m=%d | "
+                    "EMA20_1m=%.8f | "
+                    "EMA50_1m=%.8f | "
+                    "EMA50_5m=%.8f | "
+                    "EMA200_5m=%.8f",
+                    symbol.upper(),
+                    len(candles_1m),
+                    len(candles_5m),
+                    state.ema20_1m,
+                    state.ema50_1m,
+                    state.ema50_5m,
+                    state.ema200_5m
+                )
+
+                # Small delay to avoid firing the entire
+                # startup batch at exactly the same moment.
+                await asyncio.sleep(0.05)
+
+            except Exception as exc:
+
+                logger.exception(
+                    "Historical klines failed for %s: %s",
+                    symbol.upper(),
+                    exc
+                )
+
+        logger.info(
+            "Historical EMA data loaded for %d/%d symbols.",
+            ready_count,
+            len(self.symbols)
+        )
+
+    # --------------------------------------------------
     # Select liquid symbols for WebSocket
     # --------------------------------------------------
 
@@ -248,6 +451,7 @@ class BinanceMarketData:
             if "btcusdt" not in selected:
 
                 if len(selected) >= self.MAX_SYMBOLS_PER_CONNECTION:
+
                     selected = selected[
                         :self.MAX_SYMBOLS_PER_CONNECTION - 1
                     ]
@@ -553,7 +757,9 @@ class BinanceMarketData:
                 last["open_time"]
                 == candle["open_time"]
             ):
+
                 candles[-1] = candle
+
                 return
 
         candles.append(
@@ -657,6 +863,7 @@ class BinanceMarketData:
             )
 
         except json.JSONDecodeError:
+
             return
 
         data = message.get(
@@ -701,169 +908,4 @@ class BinanceMarketData:
     # Build stream list
     # --------------------------------------------------
 
-    def build_streams(self):
-
-        streams = []
-
-        for symbol in self.symbols:
-
-            streams.append(
-                f"{symbol}@trade"
-            )
-
-            streams.append(
-                f"{symbol}@bookTicker"
-            )
-
-            streams.append(
-                f"{symbol}@depth5@100ms"
-            )
-
-            streams.append(
-                f"{symbol}@kline_1m"
-            )
-
-            streams.append(
-                f"{symbol}@kline_5m"
-            )
-
-        if len(streams) > self.MAX_STREAMS_PER_CONNECTION:
-
-            logger.warning(
-                "Stream count %d exceeds safety limit %d. "
-                "Truncating symbol list.",
-                len(streams),
-                self.MAX_STREAMS_PER_CONNECTION
-            )
-
-            streams = streams[
-                :self.MAX_STREAMS_PER_CONNECTION
-            ]
-
-        logger.info(
-            "Prepared %d Binance WebSocket streams.",
-            len(streams)
-        )
-
-        return streams
-
-    # --------------------------------------------------
-    # WebSocket connection
-    # --------------------------------------------------
-
-    async def websocket_loop(self):
-
-        streams = self.build_streams()
-
-        if not streams:
-
-            raise RuntimeError(
-                "No Binance streams available."
-            )
-
-        url = (
-            self.config.ws_url
-            + "?streams="
-            + "/".join(streams)
-        )
-
-        logger.info(
-            "Connecting to Binance WebSocket..."
-        )
-
-        async with websockets.connect(
-            url,
-            ping_interval=20,
-            ping_timeout=20,
-            close_timeout=10,
-            max_size=10 * 1024 * 1024
-        ) as websocket:
-
-            logger.info(
-                "Binance WebSocket connected."
-            )
-
-            async for message in websocket:
-
-                if not self.running:
-                    break
-
-                self.handle_message(
-                    message
-                )
-
-    # --------------------------------------------------
-    # Run
-    # --------------------------------------------------
-
-    async def run(self):
-
-        try:
-
-            await self.load_symbols()
-
-            await self.refresh_24h_volume()
-
-            self.select_stream_symbols()
-
-            backoff = 1
-
-            while self.running:
-
-                try:
-
-                    if (
-                        time.time()
-                        - self.last_volume_refresh
-                        >= 300
-                    ):
-
-                        await self.refresh_24h_volume()
-
-                        self.select_stream_symbols()
-
-                    await self.websocket_loop()
-
-                    backoff = 1
-
-                except asyncio.CancelledError:
-
-                    raise
-
-                except Exception as exc:
-
-                    logger.exception(
-                        "Binance connection error: %s",
-                        exc
-                    )
-
-                    logger.info(
-                        "Reconnecting in %d seconds...",
-                        backoff
-                    )
-
-                    await asyncio.sleep(
-                        backoff
-                    )
-
-                    backoff = min(
-                        backoff * 2,
-                        60
-                    )
-
-        finally:
-
-            await self.close_session()
-
-            logger.info(
-                "Binance market data stopped."
-            )
-
-    # --------------------------------------------------
-    # Stop
-    # --------------------------------------------------
-
-    def stop(self):
-
-        self.running = False
-        
+    def build_stre
