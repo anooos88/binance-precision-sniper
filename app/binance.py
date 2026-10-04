@@ -22,13 +22,11 @@ class BinanceMarketData:
     No order execution is performed here.
     """
 
-    # We use 5 streams per symbol:
-    # trade + bookTicker + depth + 1m kline + 5m kline
-    #
-    # Binance documents a maximum of 1024 streams per connection.
-    # Keep a safety margin instead of using the absolute maximum.
+    # Binance stream safety limit.
     MAX_STREAMS_PER_CONNECTION = 900
 
+    # Streams used per symbol:
+    # trade + bookTicker + depth + 1m kline + 5m kline
     STREAMS_PER_SYMBOL = 5
 
     MAX_SYMBOLS_PER_CONNECTION = (
@@ -36,8 +34,7 @@ class BinanceMarketData:
         // STREAMS_PER_SYMBOL
     )
 
-    # Minimum 24h quote volume used when selecting
-    # symbols for the live WebSocket.
+    # Minimum 24h quote volume for liquid symbols.
     MIN_LIQUIDITY_QUOTE_VOLUME = 20_000_000
 
     # Historical candles loaded before WebSocket startup.
@@ -60,9 +57,9 @@ class BinanceMarketData:
 
         self.last_volume_refresh = 0.0
 
-    # --------------------------------------------------
-    # HTTP session
-    # --------------------------------------------------
+    # ==================================================
+    # HTTP SESSION
+    # ==================================================
 
     async def create_session(self):
         if self.session is None:
@@ -73,11 +70,12 @@ class BinanceMarketData:
             await self.session.close()
             self.session = None
 
-    # --------------------------------------------------
-    # Get active USDT Spot symbols
-    # --------------------------------------------------
+    # ==================================================
+    # LOAD ACTIVE USDT SPOT SYMBOLS
+    # ==================================================
 
     async def load_symbols(self):
+
         await self.create_session()
 
         url = (
@@ -111,12 +109,6 @@ class BinanceMarketData:
             if quote_asset != "USDT":
                 continue
 
-            # /api/v3/exchangeInfo is the Spot exchange-info
-            # endpoint. Do not require the old "SPOT" permission
-            # field because its presence/shape can vary.
-            #
-            # If Binance explicitly reports that Spot trading is
-            # not allowed, reject the symbol.
             spot_allowed = item.get(
                 "isSpotTradingAllowed"
             )
@@ -145,9 +137,9 @@ class BinanceMarketData:
                     symbol=symbol.upper()
                 )
 
-    # --------------------------------------------------
-    # Refresh 24h volume
-    # --------------------------------------------------
+    # ==================================================
+    # REFRESH 24H VOLUME
+    # ==================================================
 
     async def refresh_24h_volume(self):
 
@@ -202,9 +194,9 @@ class BinanceMarketData:
             "24h volume data refreshed."
         )
 
-    # --------------------------------------------------
-    # Historical klines
-    # --------------------------------------------------
+    # ==================================================
+    # FETCH HISTORICAL KLINES
+    # ==================================================
 
     async def fetch_historical_klines(
         self,
@@ -212,12 +204,6 @@ class BinanceMarketData:
         interval: str,
         limit: int
     ):
-        """
-        Load historical Binance Spot klines.
-
-        Used during startup to initialize EMA history
-        before the live WebSocket begins.
-        """
 
         await self.create_session()
 
@@ -270,9 +256,9 @@ class BinanceMarketData:
 
         return candles
 
-    # --------------------------------------------------
-    # Load historical klines for all selected symbols
-    # --------------------------------------------------
+    # ==================================================
+    # LOAD HISTORICAL DATA
+    # ==================================================
 
     async def load_historical_klines(self):
 
@@ -292,6 +278,15 @@ class BinanceMarketData:
 
             try:
 
+                logger.info(
+                    "Loading historical data: %s",
+                    symbol.upper()
+                )
+
+                # ------------------------------------------
+                # 300 x 1m candles
+                # ------------------------------------------
+
                 candles_1m = (
                     await self.fetch_historical_klines(
                         symbol,
@@ -300,6 +295,10 @@ class BinanceMarketData:
                     )
                 )
 
+                # ------------------------------------------
+                # 300 x 5m candles
+                # ------------------------------------------
+
                 candles_5m = (
                     await self.fetch_historical_klines(
                         symbol,
@@ -307,6 +306,10 @@ class BinanceMarketData:
                         self.HISTORICAL_5M_LIMIT
                     )
                 )
+
+                # ------------------------------------------
+                # Validate 1m history
+                # ------------------------------------------
 
                 if len(candles_1m) < 50:
 
@@ -318,6 +321,10 @@ class BinanceMarketData:
 
                     continue
 
+                # ------------------------------------------
+                # Validate 5m history
+                # ------------------------------------------
+
                 if len(candles_5m) < 200:
 
                     logger.warning(
@@ -328,7 +335,12 @@ class BinanceMarketData:
 
                     continue
 
+                # ------------------------------------------
+                # Replace current history
+                # ------------------------------------------
+
                 state.candles_1m.clear()
+
                 state.candles_5m.clear()
 
                 state.candles_1m.extend(
@@ -339,17 +351,27 @@ class BinanceMarketData:
                     candles_5m
                 )
 
-                # Calculate initial EMA values
-                # before starting the live WebSocket.
+                # ------------------------------------------
+                # Calculate 1m EMA
+                # ------------------------------------------
+
                 self.update_ema(
                     state,
                     "1m"
                 )
 
+                # ------------------------------------------
+                # Calculate 5m EMA
+                # ------------------------------------------
+
                 self.update_ema(
                     state,
                     "5m"
                 )
+
+                # ------------------------------------------
+                # Verify EMA readiness
+                # ------------------------------------------
 
                 if (
                     state.ema20_1m is None
@@ -369,7 +391,8 @@ class BinanceMarketData:
 
                 logger.info(
                     "Historical EMA ready: %s | "
-                    "1m=%d | 5m=%d | "
+                    "1m=%d | "
+                    "5m=%d | "
                     "EMA20_1m=%.8f | "
                     "EMA50_1m=%.8f | "
                     "EMA50_5m=%.8f | "
@@ -383,8 +406,7 @@ class BinanceMarketData:
                     state.ema200_5m
                 )
 
-                # Small delay to avoid firing the entire
-                # startup batch at exactly the same moment.
+                # Small delay between symbols.
                 await asyncio.sleep(0.05)
 
             except Exception as exc:
@@ -401,9 +423,9 @@ class BinanceMarketData:
             len(self.symbols)
         )
 
-    # --------------------------------------------------
-    # Select liquid symbols for WebSocket
-    # --------------------------------------------------
+    # ==================================================
+    # SELECT LIQUID SYMBOLS
+    # ==================================================
 
     def select_stream_symbols(self):
 
@@ -444,13 +466,15 @@ class BinanceMarketData:
             ]
         ]
 
-        # BTCUSDT is required for the BTC market-protection
-        # filter used by the strategy.
+        # BTCUSDT is required for BTC protection.
         if "btcusdt" in self.symbols:
 
             if "btcusdt" not in selected:
 
-                if len(selected) >= self.MAX_SYMBOLS_PER_CONNECTION:
+                if (
+                    len(selected)
+                    >= self.MAX_SYMBOLS_PER_CONNECTION
+                ):
 
                     selected = selected[
                         :self.MAX_SYMBOLS_PER_CONNECTION - 1
@@ -473,18 +497,16 @@ class BinanceMarketData:
                 "No USDT symbols passed the liquidity filter."
             )
 
-    # --------------------------------------------------
-    # Handle trade
-    # --------------------------------------------------
+    # ==================================================
+    # HANDLE TRADE
+    # ==================================================
 
     def handle_trade(
         self,
         data: dict
     ):
 
-        symbol = data.get(
-            "s"
-        )
+        symbol = data.get("s")
 
         if not symbol:
             return
@@ -536,18 +558,16 @@ class BinanceMarketData:
             tick
         )
 
-    # --------------------------------------------------
-    # Handle book ticker
-    # --------------------------------------------------
+    # ==================================================
+    # HANDLE BOOK TICKER
+    # ==================================================
 
     def handle_book_ticker(
         self,
         data: dict
     ):
 
-        symbol = data.get(
-            "s"
-        )
+        symbol = data.get("s")
 
         if not symbol:
             return
@@ -586,18 +606,16 @@ class BinanceMarketData:
         ):
             return
 
-    # --------------------------------------------------
-    # Handle depth
-    # --------------------------------------------------
+    # ==================================================
+    # HANDLE DEPTH
+    # ==================================================
 
     def handle_depth(
         self,
         data: dict
     ):
 
-        symbol = data.get(
-            "s"
-        )
+        symbol = data.get("s")
 
         if not symbol:
             return
@@ -643,25 +661,21 @@ class BinanceMarketData:
         ):
             return
 
-    # --------------------------------------------------
-    # Handle kline
-    # --------------------------------------------------
+    # ==================================================
+    # HANDLE KLINE
+    # ==================================================
 
     def handle_kline(
         self,
         data: dict
     ):
 
-        kline = data.get(
-            "k"
-        )
+        kline = data.get("k")
 
         if not kline:
             return
 
-        symbol = kline.get(
-            "s"
-        )
+        symbol = kline.get("s")
 
         if not symbol:
             return
@@ -675,9 +689,7 @@ class BinanceMarketData:
         if state is None:
             return
 
-        interval = kline.get(
-            "i"
-        )
+        interval = kline.get("i")
 
         try:
 
@@ -739,9 +751,9 @@ class BinanceMarketData:
                 "5m"
             )
 
-    # --------------------------------------------------
-    # Update candle history
-    # --------------------------------------------------
+    # ==================================================
+    # UPDATE CANDLE HISTORY
+    # ==================================================
 
     @staticmethod
     def update_candle(
@@ -766,16 +778,14 @@ class BinanceMarketData:
             candle
         )
 
-        # Prevent unlimited in-memory growth.
-        # 1m history needs at least 50 candles.
-        # 5m history needs at least 200 candles.
+        # Keep only the latest 300 candles.
         if len(candles) > 300:
 
             del candles[:-300]
 
-    # --------------------------------------------------
-    # EMA
-    # --------------------------------------------------
+    # ==================================================
+    # EMA CALCULATION
+    # ==================================================
 
     @staticmethod
     def calculate_ema(
@@ -847,9 +857,9 @@ class BinanceMarketData:
                 )
             )
 
-    # --------------------------------------------------
-    # Handle incoming WebSocket message
-    # --------------------------------------------------
+    # ==================================================
+    # HANDLE WEBSOCKET MESSAGE
+    # ==================================================
 
     def handle_message(
         self,
@@ -866,9 +876,7 @@ class BinanceMarketData:
 
             return
 
-        data = message.get(
-            "data"
-        )
+        data = message.get("data")
 
         if not isinstance(
             data,
@@ -876,9 +884,7 @@ class BinanceMarketData:
         ):
             return
 
-        event_type = data.get(
-            "e"
-        )
+        event_type = data.get("e")
 
         if event_type == "trade":
 
@@ -892,20 +898,117 @@ class BinanceMarketData:
                 data
             )
 
-        elif event_type == "depthUpdate":
+     elif event_type == "bookTicker":
+        self.handle_book_ticker(data)
 
-            self.handle_depth(
-                data
-            )
+    elif event_type == "depthUpdate":
+        self.handle_depth(data)
 
-        elif event_type == "kline":
-
-            self.handle_kline(
-                data
-            )
+    elif event_type == "kline":
+        self.handle_kline(data)
 
     # --------------------------------------------------
     # Build stream list
     # --------------------------------------------------
 
-    def build_stre
+    def build_streams(self) -> list[str]:
+        streams = []
+
+        for symbol in self.selected_symbols:
+            s = symbol.lower()
+
+            streams.append(f"{s}@trade")
+            streams.append(f"{s}@bookTicker")
+            streams.append(f"{s}@depth5@100ms")
+            streams.append(f"{s}@kline_1m")
+            streams.append(f"{s}@kline_5m")
+
+        return streams
+
+    # --------------------------------------------------
+    # WebSocket
+    # --------------------------------------------------
+
+    async def websocket_loop(self):
+        streams = self.build_streams()
+
+        if not streams:
+            raise RuntimeError("No Binance streams available.")
+
+        url = self.config.ws_url + "?streams=" + "/".join(streams)
+
+        logger.info("Prepared %d Binance WebSocket streams.", len(streams))
+        logger.info("Connecting to Binance WebSocket...")
+
+        async with websockets.connect(
+            url,
+            ping_interval=20,
+            ping_timeout=20,
+            close_timeout=10,
+            max_size=10_000_000,
+        ) as websocket:
+
+            logger.info("Binance WebSocket connected.")
+
+            async for message in websocket:
+                if not self.running:
+                    break
+
+                try:
+                    payload = json.loads(message)
+                    await self.handle_message(payload)
+
+                except Exception:
+                    logger.exception("Error processing Binance WebSocket message.")
+
+    # --------------------------------------------------
+    # Main loop
+    # --------------------------------------------------
+
+    async def run(self):
+        self.running = True
+
+        await self.load_symbols()
+
+        await self.refresh_24h_volume()
+
+        self.select_stream_symbols()
+
+        # Load historical candles before starting the live stream.
+        # This provides enough data for EMA20/EMA50/EMA200.
+        await self.load_historical_klines()
+
+        backoff = 1
+
+        while self.running:
+            try:
+                if time.time() - self.last_volume_refresh >= 300:
+                    await self.refresh_24h_volume()
+                    self.select_stream_symbols()
+
+                await self.websocket_loop()
+
+                backoff = 1
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as exc:
+                logger.error("Binance connection error: %s", exc)
+
+                if not self.running:
+                    break
+
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+
+    # --------------------------------------------------
+    # Stop
+    # --------------------------------------------------
+
+    async def stop(self):
+        self.running = False
+
+        if self.session is not None:
+            await self.session.close()
+            self.session = None
