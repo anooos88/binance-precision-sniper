@@ -15,6 +15,31 @@ logger = logging.getLogger(__name__)
 
 
 class BinanceMarketData:
+    """
+    Binance Spot market-data collector.
+
+    Paper-trading only.
+    No order execution is performed here.
+    """
+
+    # We use 5 streams per symbol:
+    # trade + bookTicker + depth + 1m kline + 5m kline
+    #
+    # Binance documents a maximum of 1024 streams per connection.
+    # Keep a safety margin instead of using the absolute maximum.
+    MAX_STREAMS_PER_CONNECTION = 900
+
+    STREAMS_PER_SYMBOL = 5
+
+    MAX_SYMBOLS_PER_CONNECTION = (
+        MAX_STREAMS_PER_CONNECTION
+        // STREAMS_PER_SYMBOL
+    )
+
+    # Minimum 24h quote volume used when selecting
+    # symbols for the live WebSocket.
+    MIN_LIQUIDITY_QUOTE_VOLUME = 20_000_000
+
     def __init__(
         self,
         config: Config,
@@ -45,11 +70,10 @@ class BinanceMarketData:
             self.session = None
 
     # --------------------------------------------------
-    # Get active USDT symbols
+    # Get active USDT Spot symbols
     # --------------------------------------------------
 
     async def load_symbols(self):
-
         await self.create_session()
 
         url = (
@@ -71,37 +95,41 @@ class BinanceMarketData:
         for item in data.get("symbols", []):
 
             symbol = item.get("symbol")
-
             status = item.get("status")
+            quote_asset = item.get("quoteAsset")
 
-            quote_asset = item.get(
-                "quoteAsset"
+            if not symbol:
+                continue
+
+            if status != "TRADING":
+                continue
+
+            if quote_asset != "USDT":
+                continue
+
+            # /api/v3/exchangeInfo is the Spot exchange-info
+            # endpoint. Do not require the old "SPOT" permission
+            # field because its presence/shape can vary.
+            #
+            # If Binance explicitly reports that Spot trading is
+            # not allowed, reject the symbol.
+            spot_allowed = item.get(
+                "isSpotTradingAllowed"
             )
 
-            is_spot = (
-                "SPOT"
-                in item.get(
-                    "permissions",
-                    []
-                )
-            )
+            if spot_allowed is False:
+                continue
 
-            if (
-                symbol
-                and status == "TRADING"
-                and quote_asset == "USDT"
-                and is_spot
-            ):
-                symbols.append(
-                    symbol.lower()
-                )
+            symbols.append(
+                symbol.lower()
+            )
 
         self.symbols = sorted(
             set(symbols)
         )
 
         logger.info(
-            "Loaded %d USDT spot symbols.",
+            "Loaded %d active USDT Spot symbols.",
             len(self.symbols)
         )
 
@@ -156,9 +184,7 @@ class BinanceMarketData:
 
                 self.states[
                     symbol
-                ].volume_24h_quote = (
-                    quote_volume
-                )
+                ].volume_24h_quote = quote_volume
 
             except (
                 TypeError,
@@ -171,6 +197,77 @@ class BinanceMarketData:
         logger.info(
             "24h volume data refreshed."
         )
+
+    # --------------------------------------------------
+    # Select liquid symbols for WebSocket
+    # --------------------------------------------------
+
+    def select_stream_symbols(self):
+
+        candidates = []
+
+        for symbol in self.symbols:
+
+            state = self.states.get(symbol)
+
+            if state is None:
+                continue
+
+            volume = float(
+                getattr(
+                    state,
+                    "volume_24h_quote",
+                    0.0
+                )
+                or 0.0
+            )
+
+            if volume >= self.MIN_LIQUIDITY_QUOTE_VOLUME:
+
+                candidates.append(
+                    (symbol, volume)
+                )
+
+        # Highest-volume markets first.
+        candidates.sort(
+            key=lambda item: item[1],
+            reverse=True
+        )
+
+        selected = [
+            symbol
+            for symbol, _ in candidates[
+                :self.MAX_SYMBOLS_PER_CONNECTION
+            ]
+        ]
+
+        # BTCUSDT is required for the BTC market-protection
+        # filter used by the strategy.
+        if "btcusdt" in self.symbols:
+
+            if "btcusdt" not in selected:
+
+                if len(selected) >= self.MAX_SYMBOLS_PER_CONNECTION:
+                    selected = selected[
+                        :self.MAX_SYMBOLS_PER_CONNECTION - 1
+                    ]
+
+                selected.append(
+                    "btcusdt"
+                )
+
+        self.symbols = selected
+
+        logger.info(
+            "Selected %d liquid USDT symbols for WebSocket.",
+            len(self.symbols)
+        )
+
+        if not self.symbols:
+
+            logger.warning(
+                "No USDT symbols passed the liquidity filter."
+            )
 
     # --------------------------------------------------
     # Handle trade
@@ -463,6 +560,13 @@ class BinanceMarketData:
             candle
         )
 
+        # Prevent unlimited in-memory growth.
+        # 1m history needs at least 50 candles.
+        # 5m history needs at least 200 candles.
+        if len(candles) > 300:
+
+            del candles[:-300]
+
     # --------------------------------------------------
     # EMA
     # --------------------------------------------------
@@ -623,6 +727,24 @@ class BinanceMarketData:
                 f"{symbol}@kline_5m"
             )
 
+        if len(streams) > self.MAX_STREAMS_PER_CONNECTION:
+
+            logger.warning(
+                "Stream count %d exceeds safety limit %d. "
+                "Truncating symbol list.",
+                len(streams),
+                self.MAX_STREAMS_PER_CONNECTION
+            )
+
+            streams = streams[
+                :self.MAX_STREAMS_PER_CONNECTION
+            ]
+
+        logger.info(
+            "Prepared %d Binance WebSocket streams.",
+            len(streams)
+        )
+
         return streams
 
     # --------------------------------------------------
@@ -634,6 +756,7 @@ class BinanceMarketData:
         streams = self.build_streams()
 
         if not streams:
+
             raise RuntimeError(
                 "No Binance streams available."
             )
@@ -675,13 +798,15 @@ class BinanceMarketData:
 
     async def run(self):
 
-        await self.load_symbols()
-
-        await self.refresh_24h_volume()
-
-        backoff = 1
-
         try:
+
+            await self.load_symbols()
+
+            await self.refresh_24h_volume()
+
+            self.select_stream_symbols()
+
+            backoff = 1
 
             while self.running:
 
@@ -692,13 +817,17 @@ class BinanceMarketData:
                         - self.last_volume_refresh
                         >= 300
                     ):
+
                         await self.refresh_24h_volume()
+
+                        self.select_stream_symbols()
 
                     await self.websocket_loop()
 
                     backoff = 1
 
                 except asyncio.CancelledError:
+
                     raise
 
                 except Exception as exc:
@@ -735,4 +864,5 @@ class BinanceMarketData:
     # --------------------------------------------------
 
     def stop(self):
+
         self.running = False
