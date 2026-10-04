@@ -1,0 +1,23 @@
+services:
+  bot:
+    build: .
+    container_name: binance-paper-sniper
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+
+  dashboard:
+    build: .
+    container_name: binance-paper-sniper-dashboard
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: python -m app.web
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - bot
