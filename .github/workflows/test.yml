@@ -1,0 +1,90 @@
+name: Test Binance Precision Sniper
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python files
+        run: |
+          python -m compileall -q app
+
+      - name: Check package imports
+        env:
+          STARTING_BALANCE: "1000"
+          MIN_24H_QUOTE_VOLUME: "20000000"
+          MAX_SPREAD_PCT: "0.05"
+          MAX_ENTRY_SPREAD_PCT: "0.03"
+          MIN_BUY_PRESSURE_10S: "0.68"
+          MIN_BUY_PRESSURE_30S: "0.60"
+          MIN_ORDERBOOK_IMBALANCE: "0.25"
+          MIN_VOLUME_VELOCITY: "2.5"
+          MAX_BTC_MOVE_10S_PCT: "0.20"
+          MAX_CHASE_5S_PCT: "0.15"
+          MIN_SCORE: "80"
+          STOP_LOSS_PCT: "0.18"
+          TAKE_PROFIT_PCT: "0.28"
+          MAX_HOLD_SECONDS: "20"
+          FEE_RATE: "0.001"
+          SLIPPAGE_BPS: "2"
+          RISK_PER_TRADE_PCT: "0.10"
+          MAX_POSITION_PCT: "20"
+          MAX_OPEN_TRADES: "3"
+          DAILY_LOSS_LIMIT_PCT: "1"
+          DASHBOARD_HOST: "127.0.0.1"
+          DASHBOARD_PORT: "8080"
+          DATABASE_PATH: "data/test_sniper.db"
+        run: |
+          python -c "from app.config import CONFIG; print('config: OK')"
+          python -c "from app.models import *; print('models: OK')"
+          python -c "from app.db import Database; print('db: OK')"
+          python -c "from app.strategy import *; print('strategy: OK')"
+          python -c "from app.paper import *; print('paper: OK')"
+          python -c "from app.binance import *; print('binance: OK')"
+          python -c "from app.report import *; print('report: OK')"
+          python -c "from app.web import *; print('web: OK')"
+
+      - name: Initialize test database
+        env:
+          DATABASE_PATH: "data/test_sniper.db"
+        run: |
+          python -c "from app.db import Database; db=Database('data/test_sniper.db'); print('database initialization: OK'); db.close()"
+
+      - name: Verify repository structure
+        run: |
+          test -f Dockerfile
+          test -f requirements.txt
+          test -f app/__init__.py
+          test -f app/binance.py
+          test -f app/config.py
+          test -f app/db.py
+          test -f app/main.py
+          test -f app/models.py
+          test -f app/paper.py
+          test -f app/report.py
+          test -f app/strategy.py
+          test -f app/web.py
+          echo "repository structure: OK"
