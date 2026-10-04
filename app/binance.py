@@ -898,7 +898,7 @@ class BinanceMarketData:
                 data
             )
 
-             elif event_type == "depthUpdate":
+        elif event_type == "depthUpdate":
 
             self.handle_depth(
                 data
