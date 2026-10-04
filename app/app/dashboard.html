@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Binance Precision Sniper</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #0b0f14;
+            color: #e8edf3;
+            font-family:
+                Arial,
+                Helvetica,
+                sans-serif;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: auto;
+        }
+
+        h1 {
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #8d99a6;
+            margin-bottom: 25px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns:
+                repeat(auto-fit, minmax(180px, 1fr));
+
+            gap: 12px;
+        }
+
+        .card {
+            background: #121820;
+            border: 1px solid #202a35;
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        .label {
+            color: #8d99a6;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
+
+        .value {
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .section {
+            margin-top: 25px;
+        }
+
+        .section h2 {
+            font-size: 18px;
+            margin-bottom: 12px;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            background: #121820;
+            border: 1px solid #202a35;
+            border-radius: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 700px;
+        }
+
+        th,
+        td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #202a35;
+            font-size: 13px;
+        }
+
+        th {
+            color: #8d99a6;
+            font-weight: normal;
+        }
+
+        .positive {
+            color: #37d67a;
+        }
+
+        .negative {
+            color: #ff5c70;
+        }
+
+        .neutral {
+            color: #e8edf3;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 5px 9px;
+            border-radius: 20px;
+            font-size: 12px;
+            background: #18232d;
+        }
+
+        .footer {
+            margin-top: 25px;
+            color: #687582;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        @media (max-width: 600px) {
+
+            body {
+                padding: 12px;
+            }
+
+            .value {
+                font-size: 20px;
+            }
+
+            h1 {
+                font-size: 22px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>Binance Precision Sniper</h1>
+
+    <div class="subtitle">
+        Real-time paper trading dashboard
+        <span class="status">PAPER ONLY</span>
+    </div>
+
+    <!-- ============================= -->
+    <!-- Main statistics -->
+    <!-- ============================= -->
+
+    <div class="grid">
+
+        <div class="card">
+            <div class="label">
+                Equity
+            </div>
+
+            <div
+                class="value"
+                id="equity"
+            >
+                --
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="label">
+                Net PnL
+            </div>
+
+            <div
+                class="value"
+                id="pnl"
+            >
+                --
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="label">
+                Win Rate
+            </div>
+
+            <div
+                class="value"
+                id="winRate"
+            >
+                --
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="label">
+                Profit Factor
+            </div>
+
+            <div
+                class="value"
+                id="profitFactor"
+            >
+                --
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="label">
+                Closed Trades
+            </div>
+
+            <div
+                class="value"
+                id="closedTrades"
+            >
+                --
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="label">
+                Max Drawdown
+            </div>
+
+            <div
+                class="value"
+                id="drawdown"
+            >
+                --
+            </div>
+        </div>
+
+    </div>
+
+
+    <!-- ============================= -->
+    <!-- Open positions -->
+    <!-- ============================= -->
+
+    <div class="section">
+
+        <h2>
+            Open Positions
+        </h2>
+
+        <div class="table-wrapper">
+
+            <table>
+
+                <thead>
+
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Entry</th>
+                        <th>Quantity</th>
+                        <th>Score</th>
+                        <th>Status</th>
+                    </tr>
+
+                </thead>
+
+                <tbody id="openPositions">
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </div>
+
+
+    <!-- ============================= -->
+    <!-- Recent trades -->
+    <!-- ============================= -->
+
+    <div class="section">
+
+        <h2>
+            Recent Trades
+        </h2>
+
+        <div class="table-wrapper">
+
+            <table>
+
+                <thead>
+
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Entry</th>
+                        <th>Exit</th>
+                        <th>PnL</th>
+                        <th>Reason</th>
+                    </tr>
+
+                </thead>
+
+                <tbody id="recentTrades">
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </div>
+
+
+    <!-- ============================= -->
+    <!-- Recent signals -->
+    <!-- ============================= -->
+
+    <div class="section">
+
+        <h2>
+            Recent Signals
+        </h2>
+
+        <div class="table-wrapper">
+
+            <table>
+
+                <thead>
+
+                    <tr>
+                        <th>Time</th>
+                        <th>Symbol</th>
+                        <th>Accepted</th>
+                        <th>Score</th>
+                        <th>Reason</th>
+                    </tr>
+
+                </thead>
+
+                <tbody id="recentSignals">
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </div>
+
+
+    <div class="footer">
+        Data refreshes automatically every 2 seconds.
+    </div>
+
+</div>
+
+
+<script>
+
+function formatNumber(
+    value,
+    decimals = 4
+) {
+
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+        return "--";
+    }
+
+    return number.toFixed(
+        decimals
+    );
+}
+
+
+function formatTime(
+    timestamp
+) {
+
+    if (!timestamp) {
+        return "--";
+    }
+
+    const date = new Date(
+        Number(timestamp) * 1000
+    );
+
+    return date.toLocaleTimeString();
+}
+
+
+function pnlClass(
+    value
+) {
+
+    const number = Number(value);
+
+    if (number > 0) {
+        return "positive";
+    }
+
+    if (number < 0) {
+        return "negative";
+    }
+
+    return "neutral";
+}
+
+
+function setText(
+    id,
+    value
+) {
+
+    const element =
+        document.getElementById(id);
+
+    if (element) {
+        element.textContent = value;
+    }
+}
+
+
+function renderOpenPositions(
+    positions
+) {
+
+    const tbody =
+        document.getElementById(
+            "openPositions"
+        );
+
+    tbody.innerHTML = "";
+
+    if (!positions.length) {
+
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5">
+                    No open positions
+                </td>
+            </tr>
+        `;
+
+        return;
+    }
+
+    positions.forEach(
+        position => {
+
+            const row =
+                document.createElement(
+                    "tr"
+                );
+
+            row.innerHTML = `
+                <td>
+                    ${position.symbol || "--"}
+                </td>
+
+                <td>
+                    ${formatNumber(
+                        position.entry_price,
+                        8
+                    )}
+                </td>
+
+                <td>
+                    ${formatNumber(
+                        position.quantity,
+                        6
+                    )}
+                </td>
+
+                <td>
+                    ${position.score ?? "--"}
+                </td>
+
+                <td>
+                    <span class="status">
+                        OPEN
+                    </span>
+                </td>
+            `;
+
+            tbody.appendChild(
+                row
+            );
+        }
+    );
+}
+
+
+function renderRecentTrades(
+    trades
+) {
+
+    const tbody =
+        document.getElementById(
+            "recentTrades"
+        );
+
+    tbody.innerHTML = "";
+
+    if (!trades.length) {
+
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5">
+                    No closed trades
+                </td>
+            </tr>
+        `;
+
+        return;
+    }
+
+    trades.forEach(
+        trade => {
+
+            const pnl =
+                Number(
+                    trade.pnl || 0
+                );
+
+            const row =
+                document.createElement(
+                    "tr"
+                );
+
+            row.innerHTML = `
+                <td>
+                    ${trade.symbol || "--"}
+                </td>
+
+                <td>
+                    ${formatNumber(
+                        trade.entry_price,
+                        8
+                    )}
+                </td>
+
+                <td>
+                    ${formatNumber(
+                        trade.exit_price,
+                        8
+                    )}
+                </td>
+
+                <td class="${pnlClass(pnl)}">
+                    ${formatNumber(
+                        pnl,
+                        6
+                    )}
+                </td>
+
+                <td>
+                    ${trade.exit_reason || "--"}
+                </td>
+            `;
+
+            tbody.appendChild(
+                row
+            );
+        }
+    );
+}
+
+
+function renderRecentSignals(
+    signals
+) {
+
+    const tbody =
+        document.getElementById(
+            "recentSignals"
+        );
+
+    tbody.innerHTML = "";
+
+    if (!signals.length) {
+
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5">
+                    No signals yet
+                </td>
+            </tr>
+        `;
+
+        return;
+    }
+
+    signals.forEach(
+        signal => {
+
+            const accepted =
+                Number(
+                    signal.accepted
+                ) === 1;
+
+            const row =
+                document.createElement(
+                    "tr"
+                );
+
+            row.innerHTML = `
+                <td>
+                    ${formatTime(
+                        signal.timestamp
+                    )}
+                </td>
+
+                <td>
+                    ${signal.symbol || "--"}
+                </td>
+
+                <td class="${
+                    accepted
+                    ? "positive"
+                    : "negative"
+                }">
+                    ${
+                        accepted
+                        ? "YES"
+                        : "NO"
+                    }
+                </td>
+
+                <td>
+                    ${signal.score ?? "--"}
+                </td>
+
+                <td>
+                    ${signal.reason || "--"}
+                </td>
+            `;
+
+            tbody.appendChild(
+                row
+            );
+        }
+    );
+}
+
+
+function updateDashboard(
+    data
+) {
+
+    const report =
+        data.report || {};
+
+    setText(
+        "equity",
+        formatNumber(
+            report.ending_balance,
+            4
+        )
+    );
+
+    const pnl =
+        Number(
+            report.net_pnl || 0
+        );
+
+    const pnlElement =
+        document.getElementById(
+            "pnl"
+        );
+
+    pnlElement.textContent =
+        formatNumber(
+            pnl,
+            6
+        );
+
+    pnlElement.className =
+        "value " + pnlClass(
+            pnl
+        );
+
+    setText(
+        "winRate",
+        formatNumber(
+            report.win_rate,
+            2
+        ) + "%"
+    );
+
+    let pf =
+        Number(
+            report.profit_factor
+        );
+
+    if (!Number.isFinite(pf)) {
+        setText(
+            "profitFactor",
+            "INF"
+        );
+    } else {
+        setText(
+            "profitFactor",
+            formatNumber(
+                pf,
+                3
+            )
+        );
+    }
+
+    setText(
+        "closedTrades",
+        report.closed_trades ?? 0
+    );
+
+    setText(
+        "drawdown",
+        formatNumber(
+            report.max_drawdown_pct,
+            2
+        ) + "%"
+    );
+
+    renderOpenPositions(
+        data.open_trades || []
+    );
+
+    renderRecentTrades(
+        data.recent_trades || []
+    );
+
+    renderRecentSignals(
+        data.recent_signals || []
+    );
+}
+
+
+async function refreshDashboard() {
+
+    try {
+
+        const response =
+            await fetch(
+                "/api",
+                {
+                    cache: "no-store"
+                }
+            );
+
+        if (!response.ok) {
+            throw new Error(
+                "HTTP " +
+                response.status
+            );
+        }
+
+        const data =
+            await response.json();
+
+        updateDashboard(
+            data
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Dashboard update failed:",
+            error
+        );
+    }
+}
+
+
+refreshDashboard();
+
+setInterval(
+    refreshDashboard,
+    2000
+);
+
+</script>
+
+</body>
+  </html>
