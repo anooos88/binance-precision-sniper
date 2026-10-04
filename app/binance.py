@@ -898,15 +898,17 @@ class BinanceMarketData:
                 data
             )
 
-     elif event_type == "bookTicker":
-        self.handle_book_ticker(data)
+             elif event_type == "depthUpdate":
 
-    elif event_type == "depthUpdate":
-        self.handle_depth(data)
+            self.handle_depth(
+                data
+            )
 
-    elif event_type == "kline":
-        self.handle_kline(data)
+        elif event_type == "kline":
 
+            self.handle_kline(
+                data
+    )
     # --------------------------------------------------
     # Build stream list
     # --------------------------------------------------
