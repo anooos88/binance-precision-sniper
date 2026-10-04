@@ -866,3 +866,4 @@ class BinanceMarketData:
     def stop(self):
 
         self.running = False
+        
